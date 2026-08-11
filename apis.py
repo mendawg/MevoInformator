@@ -3,6 +3,9 @@ import requests
 import pandas as pd
 from haversine import haversine_distance
 from load_location import get_env
+from weather import current_weather
+from directions import get_travel_duration
+from datetime import datetime
 
 MEVO_HEADERS = {
     "Client-Identifier": "mendawg"
@@ -10,11 +13,17 @@ MEVO_HEADERS = {
 MEVO_ALL_STATIONS_URL = "https://gbfs.urbansharing.com/rowermevo.pl/station_information.json"
 MEVO_ALL_BIKES_STATIONS_URL = "https://gbfs.urbansharing.com/rowermevo.pl/station_status.json"
 
-START_LAT = np.float64(get_env("START_LOCATION_LAT"))
-START_LON = np.float64 (get_env("START_LOCATION_LON"))
+START_LAT = np.float64(get_env("MEVO_START_LOCATION_LAT"))
+START_LON = np.float64 (get_env("MEVO_START_LOCATION_LON"))
+
+START_LAT_CAR = get_env("CAR_START_LOCATION_LAT")
+START_LON_CAR = get_env("CAR_START_LOCATION_LON")
 
 DEST_LAT = np.float64(get_env("DEST_LOCATION_LAT"))
 DEST_LON = np.float64(get_env("DEST_LOCATION_LON"))
+
+MAPBOX_API = get_env("MAPBOX_API")
+
 
 RADIUS = 400
 
@@ -96,11 +105,46 @@ try:
     all_bikes_dest = ebikes_dest["count"].sum()
     ebikes_dest = ebikes_dest[ebikes_dest["vehicle_type_id"] == "ebike"]["count"]
 
-
+    print(f"Godzina: {datetime.now()}")
 
     print(f"Wybrane parametry: \nStacja początkowa: {start_station["name"].iloc[0]}\nAdres: {start_station_address.iloc[0]}\n"
           f"Liczba dostępnych rowerów elektrycznych: {ebikes_start.iloc[0]}\n\nStacja końcowa najbliżej pkt. docelowego: {closest_dest_station["name"]}\n"
           f"Adres: {dest_station_address}\nLiczba wolnych stojaków: {closest_dest_station["num_docks_available"]}")
+
+    start_weather = current_weather(START_LAT,START_LON)
+    dest_weather = current_weather(DEST_LAT, DEST_LON)
+
+    print(f"Pogoda w miejscu startowym {start_weather["location"].iloc[0]}:\n"
+          f"Pogoda z godziny: {start_weather["local_time"].iloc[0]}\n"
+          f"Stan: {start_weather["main"].iloc[0]}\n"
+          f"Temperatura: {start_weather["temp"].iloc[0]}\n"
+          f"Odczuwalna temperatura: {start_weather["feels_like"].iloc[0]}\n"
+          f"Wiatr (m/s): {start_weather["wind"].iloc[0]}\n"
+          f"Zachmurzenie (%): {start_weather["clouds_percentage"].iloc[0]}\n")
+
+    print(f"Pogoda w miejscu docelowym {dest_weather["location"].iloc[0]}:\n"
+          f"Pogoda z godziny: {dest_weather["local_time"].iloc[0]}\n"
+          f"Stan: {dest_weather["main"].iloc[0]}\n"
+          f"Temperatura: {dest_weather["temp"].iloc[0]}\n"
+          f"Odczuwalna temperatura: {dest_weather["feels_like"].iloc[0]}\n"
+          f"Wiatr (m/s): {dest_weather["wind"].iloc[0]}\n"
+          f"Zachmurzenie (%): {dest_weather["clouds_percentage"].iloc[0]}")
+
+    try:
+        bike_travel = get_travel_duration("bike", str(START_LAT), str(START_LON), str(DEST_LAT), str(DEST_LON))
+        car_travel = get_travel_duration("car", START_LAT_CAR,START_LON_CAR, str(DEST_LAT), str(DEST_LON))
+
+        print(f"\nCzas podróży rowerem: {round(bike_travel["duration_s"].iloc[0] / 60, 0)} minut\n"
+              f"Dystans: {round(bike_travel["distance"].iloc[0] / 1000, 2)} km")
+
+        print(f"\nCzas podróży samochodem: {round(car_travel["duration_s"].iloc[0] / 60, 0)} minut\n"
+              f"Typowy czas: {round(car_travel["duration_typical"].iloc[0] / 60,0)} minut\n"
+              f"Dystans: {round(car_travel["distance"].iloc[0] / 1000,2)} km")
+
+    except requests.exceptions.Timeout as e:
+        print(e)
+    except RuntimeError as e:
+        print(e)
 
 
 
