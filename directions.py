@@ -1,6 +1,6 @@
 import pandas as pd
 
-from load_location import get_env
+from helpers.load_location import get_env
 import requests
 from datetime import datetime
 
