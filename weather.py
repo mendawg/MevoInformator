@@ -1,6 +1,6 @@
-import json
+# import json
 
-from load_location import get_env
+from helpers.load_location import get_env
 import requests
 import pandas as pd
 from datetime import datetime, timezone, timedelta
@@ -17,9 +17,9 @@ def current_weather(lat, lon, units = "metric"):
     open_weather = requests.get(OPEN_WEATHER_URL,timeout = 120)
 
     data = open_weather.json()
-
-    with open("test" , mode='w') as f:
-        json.dump(data, f,ensure_ascii=False, indent= 2)
+    #
+    # with open("test" , mode='w') as f:
+    #     json.dump(data, f,ensure_ascii=False, indent= 2)
 
     main_weather = data["weather"][0]["main"]
     dt = data["dt"]
