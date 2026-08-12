@@ -1,11 +1,13 @@
 import numpy as np
 import requests
 import pandas as pd
-from haversine import haversine_distance
-from load_location import get_env
+from helpers.haversine import haversine_distance
+from helpers.load_location import get_env
 from weather import current_weather
 from directions import get_travel_duration
 from datetime import datetime
+from log_api import  _init_db, log_api
+
 
 MEVO_HEADERS = {
     "Client-Identifier": "mendawg"
@@ -45,109 +47,131 @@ def check_station(station_type: str, station: pd.Series) -> bool:
             return bool(station["is_returning"])
     return False
 
-try:
-    response = requests.get(MEVO_ALL_STATIONS_URL, headers= MEVO_HEADERS)
-    bikes_at_stations = requests.get(MEVO_ALL_BIKES_STATIONS_URL, headers=MEVO_HEADERS)
-
-    #POBIERANIE DANYCH I SPRAWDZANIE SUKCESU
-    if bikes_at_stations.status_code != 200 or response.status_code != 200:
-        raise RuntimeError("Nie udalo sie pobrac stacji")
-
-
-    data_bikes = bikes_at_stations.json()["data"]["stations"]
-    bikes_df = pd.DataFrame(data_bikes)
-
-    stations = response.json()["data"]["stations"]
-    stations_df = pd.DataFrame(stations)
-
-    start_station = stations_df[
-        np.isclose(stations_df["lat"], START_LAT, atol=1e-6) &
-        np.isclose(stations_df["lon"], START_LON, atol=1e-6)
-        ]
-
-    if start_station.empty:
-        raise RuntimeError("Start station not okay")
-
-    dest_stations = stations_df[
-        haversine_distance(DEST_LAT, DEST_LON, stations_df["lat"], stations_df["lon"]) <= RADIUS
-        ].copy()
-
-    dest_stations["dist"] = haversine_distance(dest_stations["lat"], dest_stations["lon"], DEST_LAT, DEST_LON)
-    dest_stations = dest_stations.merge(bikes_df[["station_id", "num_docks_available"]], on= "station_id", how = "left")
-
-    dest_stations = dest_stations[dest_stations["num_docks_available"] >= 1]
-    if dest_stations.empty:
-        raise RuntimeError("Wszystkie stacje w okolicy pkt. docelowego są pełne!")
-
-    closest_dest_station = dest_stations.sort_values(["dist"],ascending = True).iloc[0]
-
-    max_bikes_at_dest = closest_dest_station["capacity"]
-    dest_station_address = closest_dest_station["address"]
-
-    start_station_address = start_station["address"]
-
-    start_id = start_station.iloc[0]["station_id"]
-    dest_id = closest_dest_station["station_id"]
-
-    bikes_start = bikes_df[bikes_df["station_id"] == start_id]
-    bikes_dest = bikes_df[bikes_df["station_id"] == dest_id]
-
-    if bikes_start.empty or not check_station("start", bikes_start.iloc[0]):
-        raise RuntimeError("Bledna stacja poczatkowa")
-
-    if not check_station("dest", bikes_dest.iloc[0]):
-        raise RuntimeError("Bledna stacja koncowa")
-
-    ebikes_start = pd.DataFrame(bikes_start.iloc[0]["vehicle_types_available"])
-    ebikes_start = ebikes_start[ebikes_start["vehicle_type_id"] == "ebike"]["count"]
-
-    ebikes_dest = pd.DataFrame(bikes_dest.iloc[0]["vehicle_types_available"])
-    all_bikes_dest = ebikes_dest["count"].sum()
-    ebikes_dest = ebikes_dest[ebikes_dest["vehicle_type_id"] == "ebike"]["count"]
-
-    print(f"Godzina: {datetime.now()}")
-
-    print(f"Wybrane parametry: \nStacja początkowa: {start_station["name"].iloc[0]}\nAdres: {start_station_address.iloc[0]}\n"
-          f"Liczba dostępnych rowerów elektrycznych: {ebikes_start.iloc[0]}\n\nStacja końcowa najbliżej pkt. docelowego: {closest_dest_station["name"]}\n"
-          f"Adres: {dest_station_address}\nLiczba wolnych stojaków: {closest_dest_station["num_docks_available"]}")
-
-    start_weather = current_weather(START_LAT,START_LON)
-    dest_weather = current_weather(DEST_LAT, DEST_LON)
-
-    print(f"Pogoda w miejscu startowym {start_weather["location"].iloc[0]}:\n"
-          f"Pogoda z godziny: {start_weather["local_time"].iloc[0]}\n"
-          f"Stan: {start_weather["main"].iloc[0]}\n"
-          f"Temperatura: {start_weather["temp"].iloc[0]}\n"
-          f"Odczuwalna temperatura: {start_weather["feels_like"].iloc[0]}\n"
-          f"Wiatr (m/s): {start_weather["wind"].iloc[0]}\n"
-          f"Zachmurzenie (%): {start_weather["clouds_percentage"].iloc[0]}\n")
-
-    print(f"Pogoda w miejscu docelowym {dest_weather["location"].iloc[0]}:\n"
-          f"Pogoda z godziny: {dest_weather["local_time"].iloc[0]}\n"
-          f"Stan: {dest_weather["main"].iloc[0]}\n"
-          f"Temperatura: {dest_weather["temp"].iloc[0]}\n"
-          f"Odczuwalna temperatura: {dest_weather["feels_like"].iloc[0]}\n"
-          f"Wiatr (m/s): {dest_weather["wind"].iloc[0]}\n"
-          f"Zachmurzenie (%): {dest_weather["clouds_percentage"].iloc[0]}")
+def get_data():
 
     try:
-        bike_travel = get_travel_duration("bike", str(START_LAT), str(START_LON), str(DEST_LAT), str(DEST_LON))
-        car_travel = get_travel_duration("car", START_LAT_CAR,START_LON_CAR, str(DEST_LAT), str(DEST_LON))
+        _init_db()
 
-        print(f"\nCzas podróży rowerem: {round(bike_travel["duration_s"].iloc[0] / 60, 0)} minut\n"
-              f"Dystans: {round(bike_travel["distance"].iloc[0] / 1000, 2)} km")
+        response = requests.get(MEVO_ALL_STATIONS_URL, headers= MEVO_HEADERS)
+        bikes_at_stations = requests.get(MEVO_ALL_BIKES_STATIONS_URL, headers=MEVO_HEADERS)
 
-        print(f"\nCzas podróży samochodem: {round(car_travel["duration_s"].iloc[0] / 60, 0)} minut\n"
-              f"Typowy czas: {round(car_travel["duration_typical"].iloc[0] / 60,0)} minut\n"
-              f"Dystans: {round(car_travel["distance"].iloc[0] / 1000,2)} km")
+        #POBIERANIE DANYCH I SPRAWDZANIE SUKCESU
+        if bikes_at_stations.status_code != 200 or response.status_code != 200:
+            raise RuntimeError("Nie udalo sie pobrac stacji")
 
-    except requests.exceptions.Timeout as e:
-        print(e)
+        log_api("mevo_bikes", START_LAT, START_LON, DEST_LAT, DEST_LON)
+        log_api("mevo_stations", START_LAT, START_LON, DEST_LAT, DEST_LON)
+
+        data_bikes = bikes_at_stations.json()["data"]["stations"]
+        bikes_df = pd.DataFrame(data_bikes)
+
+        stations = response.json()["data"]["stations"]
+        stations_df = pd.DataFrame(stations)
+
+        start_station = stations_df[
+            np.isclose(stations_df["lat"], START_LAT, atol=1e-6) &
+            np.isclose(stations_df["lon"], START_LON, atol=1e-6)
+            ]
+
+        if start_station.empty:
+            raise RuntimeError("Start station not okay")
+
+        dest_stations = stations_df[
+            haversine_distance(DEST_LAT, DEST_LON, stations_df["lat"], stations_df["lon"]) <= RADIUS
+            ].copy()
+
+        dest_stations["dist"] = haversine_distance(dest_stations["lat"], dest_stations["lon"], DEST_LAT, DEST_LON)
+        dest_stations = dest_stations.merge(bikes_df[["station_id", "num_docks_available"]], on= "station_id", how = "left")
+
+        dest_stations = dest_stations[dest_stations["num_docks_available"] >= 1]
+        if dest_stations.empty:
+            raise RuntimeError("Wszystkie stacje w okolicy pkt. docelowego są pełne!")
+
+        closest_dest_station = dest_stations.sort_values(["dist"],ascending = True).iloc[0]
+
+        # max_bikes_at_dest = closest_dest_station["capacity"]
+        dest_station_address = closest_dest_station["address"]
+
+        start_station_address = start_station["address"]
+
+        start_id = start_station.iloc[0]["station_id"]
+        dest_id = closest_dest_station["station_id"]
+
+        bikes_start = bikes_df[bikes_df["station_id"] == start_id]
+        bikes_dest = bikes_df[bikes_df["station_id"] == dest_id]
+
+        if bikes_start.empty or not check_station("start", bikes_start.iloc[0]):
+            raise RuntimeError("Bledna stacja poczatkowa")
+
+        if not check_station("dest", bikes_dest.iloc[0]):
+            raise RuntimeError("Bledna stacja koncowa")
+
+        ebikes_start = pd.DataFrame(bikes_start.iloc[0]["vehicle_types_available"])
+        ebikes_start = ebikes_start[ebikes_start["vehicle_type_id"] == "ebike"]["count"]
+
+        # ebikes_dest = pd.DataFrame(bikes_dest.iloc[0]["vehicle_types_available"])
+        # all_bikes_dest = ebikes_dest["count"].sum()
+        # ebikes_dest = ebikes_dest[ebikes_dest["vehicle_type_id"] == "ebike"]["count"]
+        #
+        # print(f"Godzina: {datetime.now()}")
+        #
+
+
+
+        start_weather = current_weather(START_LAT,START_LON)
+        log_api("openweather", START_LAT, START_LON, DEST_LAT, DEST_LON)
+
+        dest_weather = current_weather(DEST_LAT, DEST_LON)
+        log_api("openweather", DEST_LAT, DEST_LON, START_LAT, START_LON)
+
+
+
+
+        try:
+            bike_travel = get_travel_duration("bike", str(START_LAT), str(START_LON), str(DEST_LAT), str(DEST_LON))
+            log_api("mapbox", START_LAT, START_LON, DEST_LAT, DEST_LON)
+
+            car_travel = get_travel_duration("car", START_LAT_CAR,START_LON_CAR, str(DEST_LAT), str(DEST_LON))
+            log_api("mapbox", START_LAT_CAR, START_LON_CAR, DEST_LAT, DEST_LON)
+
+
+
+            return pd.DataFrame([{
+                "start_station" : start_station["name"].iloc[0],
+                "start_station_address" : start_station_address.iloc[0],
+                "available_ebikes" : ebikes_start.iloc[0],
+                "closest_dest_station" : closest_dest_station["name"],
+                "dest_station_address" : dest_station_address,
+                "docks_available" : closest_dest_station["num_docks_available"],
+                "start_location_weather" : start_weather["location"].iloc[0],
+                "start_location_weather_time" : start_weather["local_time"].iloc[0],
+                "start_weather_status" : start_weather["main"].iloc[0],
+                "start_temp" : start_weather["temp"].iloc[0],
+                "start_temp_feels_like" : start_weather["feels_like"].iloc[0],
+                "start_wind_ms" : start_weather["wind"].iloc[0],
+                "start_clouds_perc" : start_weather["clouds_percentage"].iloc[0],
+                "dest_location_weather" : dest_weather["location"].iloc[0],
+                "dest_location_weather_time" : dest_weather["local_time"].iloc[0],
+                "dest_weather_status" : dest_weather["main"].iloc[0],
+                "dest_temp" : dest_weather["temp"].iloc[0],
+                "dest_temp_feels_like" : dest_weather["feels_like"].iloc[0],
+                "dest_wind_ms" : dest_weather["wind"].iloc[0],
+                "dest_clouds_perc" : dest_weather["clouds_percentage"].iloc[0],
+                "bike_travel_duration_min" : round(bike_travel["duration_s"].iloc[0] / 60, 0),
+                "bike_distance_km" : round(bike_travel["distance"].iloc[0] / 1000, 2),
+                "car_travel_duration_min" : round(car_travel["duration_s"].iloc[0] / 60, 0),
+                "car_travel_duration_min_typical" : round(car_travel["duration_typical"].iloc[0] / 60,0),
+                "car_distance_km" : round(car_travel["distance"].iloc[0] / 1000,2)
+            }])
+
+
+        except requests.exceptions.Timeout as e:
+            print(e)
+        except RuntimeError as e:
+            print(e)
+
+
+
     except RuntimeError as e:
         print(e)
-
-
-
-except RuntimeError as e:
-    print(e)
 
