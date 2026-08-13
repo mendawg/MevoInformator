@@ -1,9 +1,12 @@
 import sqlite3
 import pandas as pd
 from apis import get_data
+from helpers.ApiLimitExceededError import ApiLimitExceededError
 from helpers.load_location import get_env
 from requests.auth import HTTPBasicAuth
 import requests
+from typing import Sequence
+from contextlib import closing
 
 NTFY_USER = get_env("NTFY_USER")
 NTFY_PASSWORD = get_env("NTFY_PASS")
@@ -103,13 +106,45 @@ def save_trip(trip : pd.DataFrame):
     finally:
         conn.close()
 
+def verify_api_usage(apis: Sequence[str] = ("openweather", "mevo_stations", "mapbox", "mevo_bikes"),
+                    max_limit: int = 50) -> bool:
+
+    with closing(sqlite3.connect("other/api_logs.db")) as conn:
+        cursor = conn.cursor()
+
+        apis_sql = ",".join("?" for _ in apis)
+        sql_query = f"""
+        SELECT api, COUNT(*) 
+        FROM apis
+        WHERE api IN ({apis_sql})
+        GROUP BY api
+        HAVING COUNT(*) >= ?;
+        """
+        cursor.execute(sql_query, (*apis, max_limit)) # Rozpakowujemy apis, max_limit do jednej krotki
+        overused = cursor.fetchall()
+
+        if overused:
+
+            msg = ", ".join(f"{api}: {count}" for api, count in overused)
+            raise ApiLimitExceededError(f"Przekroczono limit: {max_limit}.\n{msg}")
+
+
+    return True
+
+
+
 
 def main():
     init_db()
-    trip = get_data()
-    noti = generate_notification(trip)
-    send(noti)
-    save_trip(trip)
+    try:
+        verify_api_usage()
+        trip = get_data()
+        noti = generate_notification(trip)
+        send(noti)
+        save_trip(trip)
+    except ApiLimitExceededError as e :
+        print(e)
+
 
 
 if __name__ == "__main__":
