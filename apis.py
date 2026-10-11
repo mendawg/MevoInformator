@@ -10,7 +10,7 @@ from log_api import  _init_db, log_api
 
 
 MEVO_HEADERS = {
-    "Client-Identifier": "mendawg"
+    "Client-Identifier": ""
 }
 MEVO_ALL_STATIONS_URL = "https://gbfs.urbansharing.com/rowermevo.pl/station_information.json"
 MEVO_ALL_BIKES_STATIONS_URL = "https://gbfs.urbansharing.com/rowermevo.pl/station_status.json"
